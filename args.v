@@ -24,7 +24,7 @@ fn parse_fetch_args(args []string) !FetchOptions {
 			}
 			'--sha256' {
 				options.sha256 = option_value(args, index)!.to_lower()
-				if options.sha256.len != 64 {
+				if !is_sha256(options.sha256) {
 					return error('--sha256 must contain 64 hexadecimal characters')
 				}
 				index += 2
@@ -62,6 +62,18 @@ fn parse_fetch_args(args []string) !FetchOptions {
 		return error('fetch requires --out')
 	}
 	return options
+}
+
+fn is_sha256(value string) bool {
+	if value.len != 64 {
+		return false
+	}
+	for character in value.bytes() {
+		if !character.is_hex_digit() {
+			return false
+		}
+	}
+	return true
 }
 
 fn option_value(args []string, index int) !string {
