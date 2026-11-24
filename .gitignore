@@ -1,0 +1,4 @@
+artifact-bridge
+artifact-bridge.exe
+*.part-*
+*.log
