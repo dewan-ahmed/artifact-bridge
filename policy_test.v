@@ -279,10 +279,7 @@ fn peak_rss_kib() int {
 }
 
 fn test_large_artifact_streams_to_disk_with_bounded_memory() {
-	mut server := start_server('')
-	defer {
-		server.listener.close() or {}
-	}
+	server := start_server('')
 	options := FetchOptions{
 		...fetch_options_for('http://127.0.0.1:${server.port}/big', 'big')
 		header_env: []
@@ -303,10 +300,7 @@ fn test_large_artifact_streams_to_disk_with_bounded_memory() {
 }
 
 fn test_size_limit_stops_stream_and_removes_partial_file() {
-	mut server := start_server('')
-	defer {
-		server.listener.close() or {}
-	}
+	server := start_server('')
 	options := FetchOptions{
 		...fetch_options_for('http://127.0.0.1:${server.port}/big', 'cutoff')
 		header_env: []
@@ -318,10 +312,7 @@ fn test_size_limit_stops_stream_and_removes_partial_file() {
 }
 
 fn test_html_body_is_rejected_on_first_chunk() {
-	mut server := start_server('')
-	defer {
-		server.listener.close() or {}
-	}
+	server := start_server('')
 	options := FetchOptions{
 		...fetch_options_for('http://127.0.0.1:${server.port}/html', 'html')
 		header_env: []
@@ -331,10 +322,7 @@ fn test_html_body_is_rejected_on_first_chunk() {
 }
 
 fn test_digest_mismatch_leaves_no_files() {
-	mut server := start_server('')
-	defer {
-		server.listener.close() or {}
-	}
+	server := start_server('')
 	options := FetchOptions{
 		...fetch_options_for('http://127.0.0.1:${server.port}/file', 'nofiles')
 		sha256: 'b'.repeat(64)
