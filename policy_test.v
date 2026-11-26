@@ -183,10 +183,7 @@ fn failure_code(options FetchOptions) string {
 }
 
 fn test_failure_codes_for_validation_paths() {
-	mut server := start_server('')
-	defer {
-		server.listener.close() or {}
-	}
+	server := start_server('')
 	base := fetch_options_for('http://127.0.0.1:${server.port}/file', 'codes')
 	assert failure_code(FetchOptions{
 		...base
@@ -243,10 +240,7 @@ fn test_failure_report_redacts_url_and_omits_empty_fields() {
 }
 
 fn test_digest_mismatch_reports_both_digests() {
-	mut server := start_server('')
-	defer {
-		server.listener.close() or {}
-	}
+	server := start_server('')
 	options := FetchOptions{
 		...fetch_options_for('http://127.0.0.1:${server.port}/file', 'digest')
 		sha256: 'a'.repeat(64)
