@@ -14,6 +14,8 @@ mut:
 	log      chan string
 }
 
+// Listeners stay open until the test process exits. Closing one lets the OS
+// reuse its fd while the old serve thread is still in accept().
 fn start_server(redirect_to string) &TestServer {
 	mut listener := net.listen_tcp(.ip, '127.0.0.1:0') or { panic(err) }
 	port := listener.addr() or { panic(err) }.port() or { panic(err) }
@@ -108,10 +110,7 @@ fn test_validate_allow_host_rejects_urls_and_ports() {
 }
 
 fn test_same_origin_redirect_keeps_credentials() {
-	mut server := start_server('')
-	defer {
-		server.listener.close() or {}
-	}
+	server := start_server('')
 	options := fetch_options_for('http://127.0.0.1:${server.port}/same', 'same')
 	report := fetch_artifact(options)!
 	os.rm(options.output) or {}
@@ -121,12 +120,8 @@ fn test_same_origin_redirect_keeps_credentials() {
 }
 
 fn test_cross_origin_redirect_drops_credentials() {
-	mut target := start_server('')
-	mut origin_server := start_server('http://127.0.0.1:${target.port}/file')
-	defer {
-		target.listener.close() or {}
-		origin_server.listener.close() or {}
-	}
+	target := start_server('')
+	origin_server := start_server('http://127.0.0.1:${target.port}/file')
 	options := fetch_options_for('http://127.0.0.1:${origin_server.port}/cross', 'cross')
 	fetch_artifact(options)!
 	os.rm(options.output) or {}
@@ -135,10 +130,7 @@ fn test_cross_origin_redirect_drops_credentials() {
 }
 
 fn test_disallowed_host_is_never_contacted() {
-	mut server := start_server('')
-	defer {
-		server.listener.close() or {}
-	}
+	server := start_server('')
 	mut options := fetch_options_for('http://127.0.0.1:${server.port}/file', 'denied')
 	options.allow_hosts = ['artifacts.example.com']
 	if _ := fetch_artifact(options) {
@@ -150,12 +142,8 @@ fn test_disallowed_host_is_never_contacted() {
 }
 
 fn test_redirect_to_disallowed_host_is_blocked() {
-	mut target := start_server('')
-	mut origin_server := start_server('http://localhost:${target.port}/file')
-	defer {
-		target.listener.close() or {}
-		origin_server.listener.close() or {}
-	}
+	target := start_server('')
+	origin_server := start_server('http://localhost:${target.port}/file')
 	mut options := fetch_options_for('http://127.0.0.1:${origin_server.port}/cross',
 		'redirect-denied')
 	options.allow_hosts = ['127.0.0.1']
@@ -168,10 +156,7 @@ fn test_redirect_to_disallowed_host_is_blocked() {
 }
 
 fn test_redirect_limit() {
-	mut server := start_server('')
-	defer {
-		server.listener.close() or {}
-	}
+	server := start_server('')
 	mut options := fetch_options_for('http://127.0.0.1:${server.port}/loop', 'loop')
 	options.max_redirects = 2
 	if _ := fetch_artifact(options) {
@@ -183,10 +168,7 @@ fn test_redirect_limit() {
 }
 
 fn test_credentials_require_https_by_default() {
-	mut server := start_server('')
-	defer {
-		server.listener.close() or {}
-	}
+	server := start_server('')
 	mut options := fetch_options_for('http://127.0.0.1:${server.port}/file', 'insecure')
 	options.allow_insecure_http = false
 	if _ := fetch_artifact(options) {
@@ -214,10 +196,7 @@ fn failure_code(options FetchOptions) string {
 }
 
 fn test_failure_codes_for_validation_paths() {
-	mut server := start_server('')
-	defer {
-		server.listener.close() or {}
-	}
+	server := start_server('')
 	base := fetch_options_for('http://127.0.0.1:${server.port}/file', 'codes')
 	assert failure_code(FetchOptions{
 		...base
@@ -274,10 +253,7 @@ fn test_failure_report_redacts_url_and_omits_empty_fields() {
 }
 
 fn test_digest_mismatch_reports_both_digests() {
-	mut server := start_server('')
-	defer {
-		server.listener.close() or {}
-	}
+	server := start_server('')
 	options := FetchOptions{
 		...fetch_options_for('http://127.0.0.1:${server.port}/file', 'digest')
 		sha256: 'a'.repeat(64)
