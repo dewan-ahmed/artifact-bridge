@@ -2,6 +2,7 @@ module main
 
 import crypto.sha256
 import net.http
+import net.urllib
 import os
 import time
 
@@ -22,15 +23,44 @@ fn fetch_artifact(options FetchOptions) !FetchReport {
 		}
 		headers.add_custom(header, value)!
 	}
-	response := http.fetch(
-		url:                  options.url
-		method:               .get
-		header:               headers
-		read_timeout:         i64(options.timeout_ms) * time.millisecond
-		write_timeout:        i64(options.timeout_ms) * time.millisecond
-		max_retries:          2
-		stop_receiving_limit: options.max_bytes + 1
-	)!
+	allow_hosts := effective_allow_hosts(options.allow_hosts)
+	for entry in allow_hosts {
+		validate_allow_host(entry) or { return error('ARTIFACT_BRIDGE_ALLOW_HOSTS: ${err.msg()}') }
+	}
+	mut current := urllib.parse(options.url) or { return error('invalid URL') }
+	first_origin := origin(current)
+	mut redirects := []string{}
+	mut response := http.Response{}
+	for {
+		// Credentials only go to the origin of the URL the caller gave.
+		send_credentials := headers.keys().len > 0 && origin(current) == first_origin
+		check_url_policy(current, options, allow_hosts, send_credentials)!
+		response = http.fetch(
+			url:                  current.str()
+			method:               .get
+			header:               if send_credentials { headers } else { http.Header{} }
+			allow_redirect:       false
+			read_timeout:         i64(options.timeout_ms) * time.millisecond
+			write_timeout:        i64(options.timeout_ms) * time.millisecond
+			max_retries:          2
+			stop_receiving_limit: options.max_bytes + 1
+		)!
+		if response.status_code !in redirect_statuses {
+			break
+		}
+		if redirects.len >= options.max_redirects {
+			return error('too many redirects; the limit is ${options.max_redirects}')
+		}
+		location := response.header.get(.location) or {
+			return error('redirect ${response.status_code} has no Location header')
+		}
+		next := current.parse(location) or { return error('redirect has an invalid Location') }
+		if current.scheme == 'https' && next.scheme == 'http' && !options.allow_insecure_http {
+			return error('refusing redirect from HTTPS to plain HTTP')
+		}
+		current = next
+		redirects << safe_url(current.str())
+	}
 	if response.status_code < 200 || response.status_code >= 300 {
 		return error('unexpected HTTP status ${response.status_code}')
 	}
@@ -59,6 +89,7 @@ fn fetch_artifact(options FetchOptions) !FetchReport {
 		sha256:       digest
 		content_type: content_type
 		http_status:  response.status_code
+		redirects:    redirects
 	}
 }
 
