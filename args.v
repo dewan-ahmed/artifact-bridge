@@ -41,6 +41,24 @@ fn parse_fetch_args(args []string) !FetchOptions {
 				}
 				index += 2
 			}
+			'--allow-host' {
+				host := option_value(args, index)!
+				validate_allow_host(host)!
+				options.allow_hosts << host.trim_space()
+				index += 2
+			}
+			'--allow-insecure-http' {
+				options.allow_insecure_http = true
+				index++
+			}
+			'--max-redirects' {
+				value := option_value(args, index)!
+				if value == '' || !value.bytes().all(it.is_digit()) || value.len > 3 {
+					return error('--max-redirects must be a whole number')
+				}
+				options.max_redirects = value.int()
+				index += 2
+			}
 			'--allow-html' {
 				options.allow_html = true
 				index++

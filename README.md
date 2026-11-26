@@ -53,6 +53,18 @@ remove URL credentials and query parameters.
 - Optionally verifies SHA-256 before writing the final file.
 - Refuses to overwrite files unless `--force` is passed.
 - Uses a temporary file and atomic rename.
+- Restricts hosts with `--allow-host HOST` (repeatable) or the comma-separated
+  `ARTIFACT_BRIDGE_ALLOW_HOSTS` variable. `*.example.com` matches subdomains,
+  not `example.com` itself. When a list is set, the first URL and every
+  redirect target must match before any request is sent.
+- Requires HTTPS whenever `--header-env` is used. Pass `--allow-insecure-http`
+  to send credentials over plain HTTP, for example to a local test server.
+- Follows at most `--max-redirects N` redirects (default `5`) and refuses an
+  HTTPS to HTTP downgrade. `--header-env` headers are sent only to the origin
+  (scheme, host, and port) of the URL you passed, so a redirect to a signed
+  object-storage URL works without leaking the credential.
+- Lists the redirect chain, without credentials or query strings, in the
+  `--json` report as `redirects`.
 - Returns exit code `1` for retrieval or validation failure and `2` for invalid
   arguments.
 
