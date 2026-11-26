@@ -8,26 +8,32 @@ import time
 
 fn fetch_artifact(options FetchOptions) !FetchReport {
 	if os.exists(options.output) && !options.force {
-		return error('output already exists; use --force to replace it')
+		return fail('output_exists', 'output already exists; use --force to replace it')
 	}
 	parent := os.dir(options.output)
 	if parent != '.' && !os.is_dir(parent) {
-		return error('output directory does not exist: ${parent}')
+		return fail('output_dir_missing', 'output directory does not exist: ${parent}')
 	}
 	mut headers := http.Header{}
 	for spec in options.header_env {
-		header, env_name := parse_header_env(spec)!
+		header, env_name := parse_header_env(spec) or { return fail('invalid_argument', err.msg()) }
 		value := os.getenv(env_name)
 		if value == '' {
-			return error('environment variable ${env_name} is empty or unset')
+			return FetchFailure{
+				code:     'credential_env_missing'
+				message:  'environment variable ${env_name} is empty or unset'
+				env_name: env_name
+			}
 		}
-		headers.add_custom(header, value)!
+		headers.add_custom(header, value) or { return fail('invalid_argument', err.msg()) }
 	}
 	allow_hosts := effective_allow_hosts(options.allow_hosts)
 	for entry in allow_hosts {
-		validate_allow_host(entry) or { return error('ARTIFACT_BRIDGE_ALLOW_HOSTS: ${err.msg()}') }
+		validate_allow_host(entry) or {
+			return fail('invalid_argument', 'ARTIFACT_BRIDGE_ALLOW_HOSTS: ${err.msg()}')
+		}
 	}
-	mut current := urllib.parse(options.url) or { return error('invalid URL') }
+	mut current := urllib.parse(options.url) or { return fail('invalid_argument', 'invalid URL') }
 	first_origin := origin(current)
 	mut redirects := []string{}
 	mut response := http.Response{}
@@ -49,38 +55,57 @@ fn fetch_artifact(options FetchOptions) !FetchReport {
 			break
 		}
 		if redirects.len >= options.max_redirects {
-			return error('too many redirects; the limit is ${options.max_redirects}')
+			return fail('redirect_limit',
+				'too many redirects; the limit is ${options.max_redirects}')
 		}
 		location := response.header.get(.location) or {
-			return error('redirect ${response.status_code} has no Location header')
+			return fail('redirect_invalid',
+				'redirect ${response.status_code} has no Location header')
 		}
-		next := current.parse(location) or { return error('redirect has an invalid Location') }
+		next := current.parse(location) or {
+			return fail('redirect_invalid', 'redirect has an invalid Location')
+		}
 		if current.scheme == 'https' && next.scheme == 'http' && !options.allow_insecure_http {
-			return error('refusing redirect from HTTPS to plain HTTP')
+			return fail('insecure_http', 'refusing redirect from HTTPS to plain HTTP')
 		}
 		current = next
 		redirects << safe_url(current.str())
 	}
 	if response.status_code < 200 || response.status_code >= 300 {
-		return error('unexpected HTTP status ${response.status_code}')
+		return FetchFailure{
+			code:        'http_status'
+			message:     'unexpected HTTP status ${response.status_code}'
+			http_status: response.status_code
+			retryable:   is_retryable_status(response.status_code)
+		}
 	}
 	content_type := response.header.get(.content_type) or { '' }
 	if !options.allow_html && is_html(content_type, response.body) {
-		return error('refusing HTML response; this usually indicates a login page or API error')
+		return fail('html_response',
+			'refusing HTML response; this usually indicates a login page or API error')
 	}
 	data := response.body.bytes()
 	if i64(data.len) > options.max_bytes {
-		return error('artifact exceeds maximum size of ${options.max_bytes} bytes')
+		return FetchFailure{
+			code:      'size_exceeded'
+			message:   'artifact exceeds maximum size of ${options.max_bytes} bytes'
+			max_bytes: options.max_bytes
+		}
 	}
 	digest := sha256.sum(data).hex()
 	if options.sha256 != '' && digest != options.sha256 {
-		return error('SHA-256 mismatch: expected ${options.sha256}, received ${digest}')
+		return FetchFailure{
+			code:            'digest_mismatch'
+			message:         'SHA-256 mismatch: expected ${options.sha256}, received ${digest}'
+			expected_sha256: options.sha256
+			actual_sha256:   digest
+		}
 	}
 	temp_path := '${options.output}.part-${os.getpid()}'
-	os.write_file_array(temp_path, data)!
+	os.write_file_array(temp_path, data) or { return fail('write_failed', err.msg()) }
 	os.mv(temp_path, options.output) or {
 		os.rm(temp_path) or {}
-		return err
+		return fail('write_failed', err.msg())
 	}
 	return FetchReport{
 		url:          safe_url(options.url)

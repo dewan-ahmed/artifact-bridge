@@ -13,11 +13,19 @@ fn main() {
 		print_help()
 		exit(2)
 	}
-	options := parse_fetch_args(os.args[2..]) or {
+	args := os.args[2..]
+	options := parse_fetch_args(args) or {
+		if '--json' in args {
+			println(json.encode(failure_report(if args.len > 0 { args[0] } else { '' }, '', fail('invalid_argument',
+				err.msg()))))
+		}
 		eprintln('artifact-bridge: ${err}')
 		exit(2)
 	}
 	report := fetch_artifact(options) or {
+		if options.json {
+			println(json.encode(failure_report(options.url, options.output, err)))
+		}
 		eprintln('artifact-bridge: ${err}')
 		exit(1)
 	}

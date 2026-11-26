@@ -18,6 +18,7 @@ mut:
 }
 
 struct FetchReport {
+	ok           bool = true
 	url          string
 	path         string
 	bytes        int
