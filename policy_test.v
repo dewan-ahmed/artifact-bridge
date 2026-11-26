@@ -1,8 +1,11 @@
 module main
 
 import net
+import crypto.sha256
 import json
 import os
+
+const big_blocks = 512 // 32 MiB
 
 struct TestServer {
 mut:
@@ -37,9 +40,19 @@ fn serve(mut listener net.TcpListener, log chan string, redirect_to string) {
 			}
 		}
 		log <- '${path}|${auth}'
+		if path == '/big' {
+			conn.write_string('HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nConnection: close\r\n\r\n') or {}
+			block := []u8{len: 64 * 1024, init: u8(`a`)}
+			for _ in 0 .. big_blocks {
+				conn.write(block) or { break }
+			}
+			conn.close() or {}
+			continue
+		}
 		response := match path {
 			'/same' { 'HTTP/1.1 302 Found\r\nLocation: /file\r\nContent-Length: 0\r\n\r\n' }
 			'/cross' { 'HTTP/1.1 302 Found\r\nLocation: ${redirect_to}\r\nContent-Length: 0\r\n\r\n' }
+			'/html' { 'HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: 15\r\n\r\n<!doctype html>' }
 			'/loop' { 'HTTP/1.1 302 Found\r\nLocation: /loop\r\nContent-Length: 0\r\n\r\n' }
 			else { 'HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: 8\r\n\r\nartifact' }
 		}
@@ -277,4 +290,80 @@ fn test_digest_mismatch_reports_both_digests() {
 		return
 	}
 	assert false, 'expected digest mismatch'
+}
+
+fn peak_rss_kib() int {
+	status := os.read_file('/proc/self/status') or { return 0 }
+	for line in status.split_into_lines() {
+		if line.starts_with('VmHWM:') {
+			return line.all_after(':').trim_space().all_before(' ').int()
+		}
+	}
+	return 0
+}
+
+fn test_large_artifact_streams_to_disk_with_bounded_memory() {
+	mut server := start_server('')
+	defer {
+		server.listener.close() or {}
+	}
+	options := FetchOptions{
+		...fetch_options_for('http://127.0.0.1:${server.port}/big', 'big')
+		header_env: []
+	}
+	before := peak_rss_kib()
+	report := fetch_artifact(options)!
+	growth := peak_rss_kib() - before
+	defer {
+		os.rm(options.output) or {}
+	}
+	assert report.bytes == i64(big_blocks) * 64 * 1024
+	assert os.file_size(options.output) == u64(report.bytes)
+	expected := sha256.hexhash('a'.repeat(big_blocks * 64 * 1024))
+	assert report.sha256 == expected
+	$if linux {
+		assert growth < 16 * 1024, 'peak RSS grew by ${growth} KiB'
+	}
+}
+
+fn test_size_limit_stops_stream_and_removes_partial_file() {
+	mut server := start_server('')
+	defer {
+		server.listener.close() or {}
+	}
+	options := FetchOptions{
+		...fetch_options_for('http://127.0.0.1:${server.port}/big', 'cutoff')
+		header_env: []
+		max_bytes:  1024 * 1024
+	}
+	assert failure_code(options) == 'size_exceeded'
+	assert !os.exists(options.output)
+	assert !os.exists('${options.output}.part-${os.getpid()}')
+}
+
+fn test_html_body_is_rejected_on_first_chunk() {
+	mut server := start_server('')
+	defer {
+		server.listener.close() or {}
+	}
+	options := FetchOptions{
+		...fetch_options_for('http://127.0.0.1:${server.port}/html', 'html')
+		header_env: []
+	}
+	assert failure_code(options) == 'html_response'
+	assert !os.exists('${options.output}.part-${os.getpid()}')
+}
+
+fn test_digest_mismatch_leaves_no_files() {
+	mut server := start_server('')
+	defer {
+		server.listener.close() or {}
+	}
+	options := FetchOptions{
+		...fetch_options_for('http://127.0.0.1:${server.port}/file', 'nofiles')
+		sha256: 'b'.repeat(64)
+	}
+	assert failure_code(options) == 'digest_mismatch'
+	assert !os.exists(options.output)
+	assert !os.exists('${options.output}.part-${os.getpid()}')
 }

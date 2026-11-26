@@ -37,19 +37,32 @@ fn fetch_artifact(options FetchOptions) !FetchReport {
 	first_origin := origin(current)
 	mut redirects := []string{}
 	mut response := http.Response{}
+	temp_path := '${options.output}.part-${os.getpid()}'
+	mut sink := &StreamSink{
+		path:       temp_path
+		max_bytes:  options.max_bytes
+		allow_html: options.allow_html
+		hasher:     sha256.new()
+	}
+	defer {
+		sink.close()
+		os.rm(temp_path) or {}
+	}
 	for {
 		// Credentials only go to the origin of the URL the caller gave.
 		send_credentials := headers.keys().len > 0 && origin(current) == first_origin
 		check_url_policy(current, options, allow_hosts, send_credentials)!
 		response = http.fetch(
-			url:                  current.str()
-			method:               .get
-			header:               if send_credentials { headers } else { http.Header{} }
-			allow_redirect:       false
-			read_timeout:         i64(options.timeout_ms) * time.millisecond
-			write_timeout:        i64(options.timeout_ms) * time.millisecond
-			max_retries:          2
-			stop_receiving_limit: options.max_bytes + 1
+			url:                current.str()
+			method:             .get
+			header:             if send_credentials { headers } else { http.Header{} }
+			allow_redirect:     false
+			read_timeout:       i64(options.timeout_ms) * time.millisecond
+			write_timeout:      i64(options.timeout_ms) * time.millisecond
+			max_retries:        2
+			user_ptr:           sink
+			on_progress_body:   stream_chunk
+			stop_copying_limit: sniff_bytes
 		)!
 		if response.status_code !in redirect_statuses {
 			break
@@ -80,19 +93,11 @@ fn fetch_artifact(options FetchOptions) !FetchReport {
 		}
 	}
 	content_type := response.header.get(.content_type) or { '' }
-	if !options.allow_html && is_html(content_type, response.body) {
-		return fail('html_response',
-			'refusing HTML response; this usually indicates a login page or API error')
+	if !options.allow_html && is_html(content_type, '') {
+		return html_failure()
 	}
-	data := response.body.bytes()
-	if i64(data.len) > options.max_bytes {
-		return FetchFailure{
-			code:      'size_exceeded'
-			message:   'artifact exceeds maximum size of ${options.max_bytes} bytes'
-			max_bytes: options.max_bytes
-		}
-	}
-	digest := sha256.sum(data).hex()
+	sink.finish()!
+	digest := sink.hasher.sum([]u8{}).hex()
 	if options.sha256 != '' && digest != options.sha256 {
 		return FetchFailure{
 			code:            'digest_mismatch'
@@ -101,16 +106,11 @@ fn fetch_artifact(options FetchOptions) !FetchReport {
 			actual_sha256:   digest
 		}
 	}
-	temp_path := '${options.output}.part-${os.getpid()}'
-	os.write_file_array(temp_path, data) or { return fail('write_failed', err.msg()) }
-	os.mv(temp_path, options.output) or {
-		os.rm(temp_path) or {}
-		return fail('write_failed', err.msg())
-	}
+	os.mv(temp_path, options.output) or { return fail('write_failed', err.msg()) }
 	return FetchReport{
 		url:          safe_url(options.url)
 		path:         options.output
-		bytes:        data.len
+		bytes:        sink.written
 		sha256:       digest
 		content_type: content_type
 		http_status:  response.status_code
