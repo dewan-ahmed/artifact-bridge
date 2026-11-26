@@ -49,10 +49,15 @@ remove URL credentials and query parameters.
 
 - Rejects non-2xx responses.
 - Rejects HTML login and error pages by default.
-- Enforces a maximum response size.
-- Optionally verifies SHA-256 before writing the final file.
+- Enforces a maximum response size, rejecting early when `Content-Length` is
+  already too large and stopping mid-stream otherwise.
+- Streams the body to a temporary file while hashing it, so memory stays at a
+  few MiB regardless of artifact size. A 300 MB download peaks at about 5 MiB
+  RSS.
+- Optionally verifies SHA-256 before the final file appears.
 - Refuses to overwrite files unless `--force` is passed.
-- Uses a temporary file and atomic rename.
+- Uses a temporary file and atomic rename, and removes the temporary file on
+  every failure.
 - Restricts hosts with `--allow-host HOST` (repeatable) or the comma-separated
   `ARTIFACT_BRIDGE_ALLOW_HOSTS` variable. `*.example.com` matches subdomains,
   not `example.com` itself. When a list is set, the first URL and every

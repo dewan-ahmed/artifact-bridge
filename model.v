@@ -21,7 +21,7 @@ struct FetchReport {
 	ok           bool = true
 	url          string
 	path         string
-	bytes        int
+	bytes        i64
 	sha256       string
 	content_type string
 	http_status  int
