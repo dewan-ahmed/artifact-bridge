@@ -62,15 +62,16 @@ fn effective_port(url urllib.URL) string {
 // fetch, before any request is sent to it.
 fn check_url_policy(url urllib.URL, options FetchOptions, allow_hosts []string, with_credentials bool) ! {
 	if url.scheme !in ['http', 'https'] {
-		return error('unsupported URL scheme "${url.scheme}"')
+		return fail('unsupported_scheme', 'unsupported URL scheme "${url.scheme}"')
 	}
 	if url.hostname() == '' {
-		return error('URL has no host')
+		return fail('invalid_argument', 'URL has no host')
 	}
 	if !host_allowed(url.hostname(), allow_hosts) {
-		return error('host ${url.hostname()} is not in the allowed host list')
+		return fail('host_not_allowed', 'host ${url.hostname()} is not in the allowed host list')
 	}
 	if with_credentials && url.scheme != 'https' && !options.allow_insecure_http {
-		return error('refusing to send --header-env credentials over plain HTTP; use HTTPS or --allow-insecure-http')
+		return fail('insecure_http',
+			'refusing to send --header-env credentials over plain HTTP; use HTTPS or --allow-insecure-http')
 	}
 }

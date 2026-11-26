@@ -1,6 +1,7 @@
 module main
 
 import net
+import json
 import os
 
 struct TestServer {
@@ -172,4 +173,84 @@ fn test_env_allow_hosts_are_merged() {
 	}
 	assert effective_allow_hosts(['c.example.com']) == ['c.example.com', 'a.example.com',
 		'*.b.example.com']
+}
+
+fn failure_code(options FetchOptions) string {
+	fetch_artifact(options) or {
+		return failure_report(options.url, options.output, err).error.code
+	}
+	return 'ok'
+}
+
+fn test_failure_codes_for_validation_paths() {
+	server := start_server('')
+	base := fetch_options_for('http://127.0.0.1:${server.port}/file', 'codes')
+	assert failure_code(FetchOptions{
+		...base
+		sha256: '0'.repeat(64)
+	}) == 'digest_mismatch'
+	assert failure_code(FetchOptions{
+		...base
+		max_bytes: 1
+	}) == 'size_exceeded'
+	assert failure_code(FetchOptions{
+		...base
+		header_env: ['Authorization=AB_TEST_UNSET']
+	}) == 'credential_env_missing'
+	assert failure_code(FetchOptions{
+		...base
+		allow_hosts: ['example.com']
+	}) == 'host_not_allowed'
+	os.write_file(base.output, 'x')!
+	defer {
+		os.rm(base.output) or {}
+	}
+	assert failure_code(FetchOptions{
+		...base
+		force: false
+	}) == 'output_exists'
+}
+
+fn test_network_failure_is_retryable() {
+	report := failure_report('https://example.com/a', 'a',
+		error('net.dial_tcp failed: connection refused'))
+	assert report.error.code == 'network'
+	assert report.error.retryable
+}
+
+fn test_http_status_retryability() {
+	assert is_retryable_status(429)
+	assert is_retryable_status(503)
+	assert !is_retryable_status(403)
+	assert !is_retryable_status(404)
+}
+
+fn test_failure_report_redacts_url_and_omits_empty_fields() {
+	report := failure_report('https://user:pass@example.com/build.zip?token=secret', 'build.zip', FetchFailure{
+		code:        'http_status'
+		message:     'unexpected HTTP status 403'
+		http_status: 403
+	})
+	encoded := json.encode(report)
+	assert !encoded.contains('secret')
+	assert !encoded.contains('pass@')
+	assert encoded.contains('"ok":false')
+	assert encoded.contains('"http_status":403')
+	assert !encoded.contains('expected_sha256')
+}
+
+fn test_digest_mismatch_reports_both_digests() {
+	server := start_server('')
+	options := FetchOptions{
+		...fetch_options_for('http://127.0.0.1:${server.port}/file', 'digest')
+		sha256: 'a'.repeat(64)
+	}
+	fetch_artifact(options) or {
+		report := failure_report(options.url, options.output, err)
+		assert report.error.expected_sha256 == 'a'.repeat(64)
+		assert report.error.actual_sha256.len == 64
+		assert !report.error.retryable
+		return
+	}
+	assert false, 'expected digest mismatch'
 }
